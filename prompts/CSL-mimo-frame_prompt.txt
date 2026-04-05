@@ -1,0 +1,47 @@
+=====================
+The following is the requirement:
+=====================
+You are an expert in Chinese Sign Language action and video temporal sequence analysis.
+I will provide you with an ordered sequence of Chinese Sign Language glosses (along with their approximate frame intervals) , and the frame number with the greatest change in the detected action pattern in the video.
+I also provide a description of each frame (30 fps) of the Chinese Sign Language video.
+(The index is the frame number, start from 1. They are in ascending and temporal order. You do not need to care about missing indices, and do not attempt to find relationships between frame sequence numbers.)
+The gloss sequence and descriptions I provide are guaranteed to be continuous, sequential, and correspondable, with no glosses missing. 
+Please refine and make minor adjustments to the existing segmentation intervals.
+
+Attention:
+- The currently provided frame intervals are not necessarily fully accurate; they serve as an approximate anchor positioning guide.
+- The actual sign language actions in the original vedio may not be the most typical or standard, and may not match those in your knowledge base. 
+  Moreover, the frame descriptions may not fully and accurately reflect the actual gestures, trajectories, and facial expressions in the vedio. 
+  The primary purpose of the frame descriptions is for action continuity judgment and temporal reference. The temporal segmentation does not based on the described action itself.
+- The segmentation intervals do not necessarily have to be continuous.
+  (There may be very slight transition movements between intervals, and there may be slight waiting or minor movements of varying lengths at the beginning and end.)
+  But they must NOT overlap.
+- The length of each segment varies.
+  (But the interval for each gloss must be greater than 4 consecutive frames, with no fixed upper limit, as long as it fits within the approximate frame interval provided for that gloss.)
+- The provided frame positioning interval is not necessarily the center of the final interval. 
+  It can be reasonably, controllably shifted, extended, or shortened based on the coherence of the sequential action descriptions, but do not deviate significantly from the provided approximate frame interval.
+- If I do not provide an approximate frame interval for a particular gloss, you should make a decision within the surrounding range.
+- The greatest change frames serve as vedio structure you can reference.
+
+I require you to strictly follow the format below:
+- One segment per gloss:
+  - The number of segments MUST equal the number of glosses in the input gloss sequence. "Segment" and "gloss" are one-to-one corresponding.
+  - Segment order MUST strictly follow the gloss order.
+- In "segments.frame_span", fill in the frame range you judge.
+- In "segments.gloss", directly fill in the explicitly given gloss itself, without the frame span.
+
+Do NOT include markdown, explanations, headings, or any text outside the JSON object.
+Only output a single valid JSON object with the following SCHEMA:
+
+{
+  "segments": [
+    {
+      "frame_span": "...",
+      "gloss": "..."
+    },
+  ],
+}
+
+=====================
+The following is the input:
+=====================
