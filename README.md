@@ -24,8 +24,9 @@ pip install -r requirements.txt
 - ctcdecode==0.4 [[parlance/ctcdecode](https://github.com/parlance/ctcdecode)]，for beam search decode.
 ------
 # Data Preparation
-- PHOENIX2014-T dataset: Download the RWTH-PHOENIX-Weather 2014 Dataset [[download link](https://www-i6.informatik.rwth-aachen.de/~koller/RWTH-PHOENIX-2014-T/)]
-- CSL dataset: Request the CSL Dataset from this website [[download link](https://ustc-slr.github.io/openresources/cslr-dataset-2015/index.html)]
+- PHOENIX2014-T dataset: Download the RWTH-PHOENIX-Weather-2014-T Dataset [[download link](https://www-i6.informatik.rwth-aachen.de/~koller/RWTH-PHOENIX-2014-T/)]
+- CSL-Daily dataset: Request the CSL Dataset from this website [[download link](https://ustc-slr.github.io/datasets/2021_csl_daily/)]
+
 Download datasets and extract them, no further data preprocessing needed.
 ------
 # Steps
