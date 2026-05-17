@@ -1,4 +1,4 @@
-## 基于 ResNet50 提取视频帧特征，计算变化分数，选出变化最大的帧
+## 基于 ResNet18 提取视频帧特征，计算变化分数，选出变化最大的帧
 
 import os
 os.environ["TORCH_HOME"] = "/root/autodl-tmp/z-csl-data/models/resnet"
@@ -41,11 +41,11 @@ def load_frames(frame_dir):
 # Feature extractor
 # ============================================================
 
-class ResNet50Feature(nn.Module):
+class ResNet18Feature(nn.Module):
     def __init__(self):
         super().__init__()
-        resnet = models.resnet50(
-            weights=models.ResNet50_Weights.IMAGENET1K_V1
+        resnet = models.resnet18(
+            weights=models.ResNet18_Weights.IMAGENET1K_V1
         )
         self.backbone = nn.Sequential(*list(resnet.children())[:-1])
         for p in self.parameters():
@@ -57,7 +57,7 @@ class ResNet50Feature(nn.Module):
 
 
 def extract_features(frame_paths, batch_size=16):
-    model = ResNet50Feature().to(DEVICE).eval()
+    model = ResNet18Feature().to(DEVICE).eval()
 
     transform = T.Compose([
         T.Resize((224, 224)),
@@ -119,7 +119,6 @@ def select_top_change_frames(change, num_gloss, min_gap=MIN_GAP):
     """
     从 change 中选出变化最大的 (num_gloss + extra) 个帧号
     且任意两个结果至少相隔 min_gap 帧
-    extra = min(num_gloss, 2)
     """
     extra = 3
     K = num_gloss + extra
@@ -158,7 +157,7 @@ if __name__ == "__main__":
     num_gloss = len(glosses)
 
     # 动态 window
-    window = max(2, num_frames // (num_gloss + 5))
+    window = max(2, num_frames // (num_gloss + 3))
 
     print(f"Total frames: {num_frames}")
     print(f"Num glosses: {num_gloss}")

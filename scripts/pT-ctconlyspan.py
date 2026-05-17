@@ -1,5 +1,5 @@
 ## 基于 CTC 损失函数，并强制对齐，
-## 结构resnet18（预训练权重）-1dCNN（k5, p2, k5, p2）-BiLSTM（双向各1024隐藏层）-CTC，即CSLR的baseline，
+## 结构resnet18（预训练权重）-1dCNN（k5, p2, k5, p2）-BiLSTM（双向各512隐藏层）-CTC，即CSLR的baseline，
 ## 解码使用viterbi动态规划强制对齐策略，给定groundtruth的gloss序列，找到一条强制对齐的概率最大的路径。
 ## num_workers=8，训练1个epoch约0.4h。
 ## 最新版
@@ -138,33 +138,33 @@ class CTCModel(nn.Module):
         self.temporal_conv = nn.Sequential(  # K5 → P2 → K5 → P2
             nn.Conv1d(
                 in_channels=512,
-                out_channels=512,
+                out_channels=1024,
                 kernel_size=5,
                 stride=1,
                 padding=2
             ),
-            nn.BatchNorm1d(512),
+            nn.BatchNorm1d(1024),
             nn.ReLU(inplace=True),
             nn.MaxPool1d(kernel_size=2, stride=2), 
             nn.Conv1d(
-                in_channels=512,
-                out_channels=512,
+                in_channels=1024,
+                out_channels=1024,
                 kernel_size=5,
                 stride=1,
                 padding=2
             ),
-            nn.BatchNorm1d(512),
+            nn.BatchNorm1d(1024),
             nn.ReLU(inplace=True),
             nn.MaxPool1d(kernel_size=2, stride=2),
         )
         self.lstm = nn.LSTM(
-            input_size=512,
-            hidden_size=1024,
+            input_size=1024,
+            hidden_size=512,
             num_layers=2,
             bidirectional=True,
             batch_first=True
         )
-        self.fc = nn.Linear(2048, num_gloss + 1)
+        self.fc = nn.Linear(1024, num_gloss + 1)
 
     def forward(self, frames):
         B, T, C, H, W = frames.shape

@@ -1,3 +1,4 @@
+# 训练一个epoch10min；推理一次dev0.5min；推理一次test10min
 import os
 import re
 import json
@@ -288,8 +289,10 @@ class CTCModel(nn.Module):
         )  # [B, T', 1024]
 
         # ---- logits ----
-        mid_logits = self.mid_fc(feats)
+        # mid_logits = self.mid_fc(feats)
         logits = self.fc(out)
+        
+        mid_logits = self.fc(feats)  # 1D-CNN 后的中间监督，共享分类器
 
         return mid_logits, logits, out, lengths_ds
 

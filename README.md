@@ -1,15 +1,13 @@
 # Repo Directory
 ```bash
 prompts
-  ├─ CSL/per_frame_description/
-  ├─ phoenix-T/per_frame_description/
   ├─ Online_LLM_prompt.txt
 scripts
   ├─ cslr-baseline.py（baseline）
   ├─ csle-ce+ctc.py（ours）
   ├─ ctconlyspan.py（ctc anchor point）
   ├─ vl-describeframe.py（MLLM）
-  ├─ frame-change.py（WDS）
+  ├─ frame-change.py（Window-based Difference Score）
   ├─ model-download.py
 finalspan.txt
 requirements.txt
@@ -30,5 +28,5 @@ pip install -r requirements.txt
 Download datasets and extract them, no further data preprocessing needed.
 ------
 # Steps
-GTM(ctc anchor point + MLLM + WDS + Online LLM) -> finalspan.txt 
+GTM (ctc anchor point + MLLM + WDS -> Online LLM) -> finalspan.txt 
 -> csle-ce+ctc.py

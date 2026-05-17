@@ -1,3 +1,4 @@
+# 训练一个epoch10min；推理一次dev0.5min；推理一次test10min
 import os
 import re
 import json

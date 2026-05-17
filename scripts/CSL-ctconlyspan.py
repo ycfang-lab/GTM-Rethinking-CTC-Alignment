@@ -139,25 +139,25 @@ class CTCModel(nn.Module):
         self.backbone = backbone
 
         self.temporal_conv = nn.Sequential(
-            nn.Conv1d(512, 512, 5, padding=2),
-            nn.BatchNorm1d(512),
+            nn.Conv1d(512, 1024, 5, padding=2),
+            nn.BatchNorm1d(1024),
             nn.ReLU(inplace=True),
             nn.MaxPool1d(2),
-            nn.Conv1d(512, 512, 5, padding=2),
-            nn.BatchNorm1d(512),
+            nn.Conv1d(1024, 1024, 5, padding=2),
+            nn.BatchNorm1d(1024),
             nn.ReLU(inplace=True),
             nn.MaxPool1d(2),
         )
 
         self.lstm = nn.LSTM(
-            input_size=512,
-            hidden_size=1024,
+            input_size=1024,
+            hidden_size=512,
             num_layers=2,
             bidirectional=True,
             batch_first=True
         )
 
-        self.fc = nn.Linear(2048, num_gloss + 1)
+        self.fc = nn.Linear(1024, num_gloss + 1)
 
     def forward(self, frames):
         B, T, C, H, W = frames.shape

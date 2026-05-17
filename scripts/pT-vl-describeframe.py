@@ -3,6 +3,7 @@
 ## 用于mimo-frame_prompt.txt和mimo-frame_gencot.py的生成
 
 # 若总帧数过大，采取分阶段减小文本长度的采样，保证最终描述文本在45帧左右
+# 单卡4090，若每一帧都描述，需约26天，若采用代码中所写的采样策略，约12天
 
 import os
 from pathlib import Path
@@ -135,7 +136,7 @@ def main():
         if frame_count > 200:
             continue  # 跳过过长视频
         
-        for idx, frame_path in enumerate(frame_files, start=1):
+        for idx, frame_path in enumerate(frame_files, start=1): # 冗余处理，若有时间可以逐帧描述，注释掉整个这部分
             if frame_count < 110 and idx % 2 == 0: # 每2帧跳过1帧，(55, n)
                 print(f"  [{idx}/{len(frame_files)}] Skipping {frame_path.name} (idx % 2 == 0)")
                 continue  # 直接跳过，不处理这个帧

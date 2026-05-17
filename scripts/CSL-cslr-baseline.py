@@ -1,3 +1,4 @@
+# 训练一个epoch30min；推理一次dev2min；推理一次test25min
 import os
 import json
 import csv
