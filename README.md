@@ -8,6 +8,7 @@ scripts
   ├─ ctconlyspan.py（ctc anchor point）
   ├─ vl-describeframe.py（MLLM）
   ├─ frame-change.py（Window-based Difference Score）
+  ├─ llm-reason.py（Online LLM）
   ├─ model-download.py
 finalspan.txt
 requirements.txt

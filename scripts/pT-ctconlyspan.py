@@ -360,8 +360,16 @@ def run_infer_and_save(model, infer_loader, gloss2id, id2gloss, device, out_dir,
             #     dtype=torch.long,
             #     device=logits.device
             # )
+            
+            # -------- adaptive blank penalty --------
+            # log_probs: [T, C]
+            # blank id = 0
+            blank_logp_mean = log_probs[:, 0].mean()
+            # target_ids: 当前视频的 gloss id 序列（不含 blank）
+            target_logp_mean = log_probs[:, target_ids].mean()
+            adaptive_blank_penalty = max(4, blank_logp_mean - target_logp_mean - 2)
 
-            frame_ids = ctc_forced_align_viterbi(log_probs, target_ids, blank=0, blank_penalty=0, warm_frames=1)
+            frame_ids = ctc_forced_align_viterbi(log_probs, target_ids, blank=0, blank_penalty=float(adaptive_blank_penalty.item()), warm_frames=1)
             spans = spans_from_frame_ids_allow_blank(frame_ids, id2gloss, blank=0, max_blank_gap=0)
 
             # -------- statistics --------

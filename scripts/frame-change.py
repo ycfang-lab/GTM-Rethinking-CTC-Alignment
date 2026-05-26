@@ -141,36 +141,3 @@ def select_top_change_frames(change, num_gloss, min_gap=MIN_GAP):
 # ============================================================
 # Main
 # ============================================================
-
-if __name__ == "__main__":
-
-    frame_dir = (
-        "/root/autodl-tmp/z-csl-data/PHOENIX-2014-T-release-v3/"
-        "PHOENIX-2014-T/features/fullFrame-210x260px/train/"
-        "31October_2009_Saturday_tagesschau-7148"
-    )
-
-    glosses = ["MORGEN", "SECHS", "GRAD", "SIEBZEHN", "GRAD"]  # 示例 gloss 列表
-
-    frames = load_frames(frame_dir)
-    num_frames = len(frames)
-    num_gloss = len(glosses)
-
-    # 动态 window
-    window = max(2, num_frames // (num_gloss + 3))
-
-    print(f"Total frames: {num_frames}")
-    print(f"Num glosses: {num_gloss}")
-    print(f"Dynamic WINDOW: {window} frames (~{window / FPS:.2f}s)")
-
-    features = extract_features(frames)
-    change = compute_change_score(features, w=window)
-
-    top_frames = select_top_change_frames(
-        change,
-        num_gloss=num_gloss
-    )
-
-    print("\nTop change frames (frame indices):")
-    for f in top_frames:
-        print(f)
