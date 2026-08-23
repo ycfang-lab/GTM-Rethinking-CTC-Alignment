@@ -1,4 +1,4 @@
-# 训练一个epoch10min；推理一次dev0.5min；推理一次test10min
+# Training one epoch takes 10min; one dev inference takes 0.5min; one test inference takes 10min
 import os
 import re
 import json
@@ -27,15 +27,15 @@ from ctcdecode import CTCBeamDecoder
 # =========================
 # User configs (PHOENIX-2014-T)
 # =========================
-TRAIN_FRAMES_ROOT = "/root/autodl-tmp/z-csl-data/PHOENIX-2014-T-release-v3/PHOENIX-2014-T/features/fullFrame-210x260px/train"
-DEV_FRAMES_ROOT = "/root/autodl-tmp/z-csl-data/PHOENIX-2014-T-release-v3/PHOENIX-2014-T/features/fullFrame-210x260px/dev"
-TEST_FRAMES_ROOT = "/root/autodl-tmp/z-csl-data/PHOENIX-2014-T-release-v3/PHOENIX-2014-T/features/fullFrame-210x260px/test"
+TRAIN_FRAMES_ROOT = "PHOENIX-2014-T-release-v3/PHOENIX-2014-T/features/fullFrame-210x260px/train"
+DEV_FRAMES_ROOT = "PHOENIX-2014-T-release-v3/PHOENIX-2014-T/features/fullFrame-210x260px/dev"
+TEST_FRAMES_ROOT = "PHOENIX-2014-T-release-v3/PHOENIX-2014-T/features/fullFrame-210x260px/test"
 
-TRAIN_CSV = "/root/autodl-tmp/z-csl-data/PHOENIX-2014-T-release-v3/PHOENIX-2014-T/annotations/manual/PHOENIX-2014-T.train.corpus.csv"
-DEV_CSV = "/root/autodl-tmp/z-csl-data/PHOENIX-2014-T-release-v3/PHOENIX-2014-T/annotations/manual/PHOENIX-2014-T.dev.corpus.csv"
-TEST_CSV = "/root/autodl-tmp/z-csl-data/PHOENIX-2014-T-release-v3/PHOENIX-2014-T/annotations/manual/PHOENIX-2014-T.test.corpus.csv"
+TRAIN_CSV = "PHOENIX-2014-T-release-v3/PHOENIX-2014-T/annotations/manual/PHOENIX-2014-T.train.corpus.csv"
+DEV_CSV = "PHOENIX-2014-T-release-v3/PHOENIX-2014-T/annotations/manual/PHOENIX-2014-T.dev.corpus.csv"
+TEST_CSV = "PHOENIX-2014-T-release-v3/PHOENIX-2014-T/annotations/manual/PHOENIX-2014-T.test.corpus.csv"
 
-LOG_PATH = "/root/autodl-tmp/z-csl-data/pT-cslr-ctc+beam.jsonl"
+LOG_PATH = "pT-cslr-ctc+beam.jsonl"
 
 EPOCHS = 50
 BATCH_SIZE = 2
@@ -45,7 +45,7 @@ ACCUM_STEPS = 2
 LOG_EVERY_STEPS = 200
 
 SAVE_EPOCHS = {10, 20, 30, 40, 50}
-SAVE_ROOT_TMPL = "/root/autodl-tmp/z-csl-data/pT-cslr-ctc+beam_epoch{ep}"
+SAVE_ROOT_TMPL = "pT-cslr-ctc+beam_epoch{ep}"
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -96,7 +96,7 @@ class CTCModel(nn.Module):
         """
         inputs: [B, T, C, H, W]
         lengths: [B]
-        让 ResNet 的 BatchNorm 只统计真实帧，不统计 padding 帧
+        Make ResNet BatchNorm use only real frames for statistics, excluding padding frames
         """
         B, T, C, H, W = inputs.shape
         valid_frames = []
@@ -116,23 +116,20 @@ class CTCModel(nn.Module):
     def forward(self, frames: torch.Tensor, lengths: torch.Tensor):
         """
         frames:  [B, T, C, H, W]
-        lengths: [B] (原始长度)
+        lengths: [B] (original lengths)
         return:
             logits:     [B, T', V]
-            lengths_ds: [B] (下采样后长度)
+            lengths_ds: [B] (downsampled lengths)
         """
         B, T, C, H, W = frames.shape
-
-        # frames = frames.view(B * T, C, H, W)
-        # feats = self.backbone(frames)        # [B*T, 512]
-        # feats = feats.view(B, T, 512)        # [B, T, 512]
+        
         feats = self.masked_bn(frames, lengths)  # [B, T, 512]
 
         feats = feats.transpose(1, 2)        # [B, 512, T]
         feats = self.temporal_conv(feats)    # [B, 1024, T']
         feats = feats.transpose(1, 2)        # [B, T', 1024]
 
-        # 下采样长度（两次 pool）
+        # Downsample lengths (two pooling operations)
         lengths_ds = lengths // 2
         lengths_ds = lengths_ds // 2
         lengths_ds = torch.clamp(lengths_ds, min=1)
@@ -306,24 +303,24 @@ def decode_with_ctcdecoder(
 
 def timesteps_to_spans(token_ids: List[int], token_times: List[int], T: int):
     """
-    仅在推理时使用，验证输出是否合理
-    用 ctcdecode 返回的 token 峰值时间 timesteps 做一个稳定的 span 近似。
-    token_times 长度应 == len(token_ids).
-    输出 [(token_id, start_t, end_t)]，t 是下采样后的时间步（0-based, within [0, T-1]）
+    Used only during inference to verify whether the output is reasonable
+    Use the token peak timesteps returned by ctcdecode to obtain a stable span approximation.
+    The length of token_times should equal len(token_ids).
+    Return [(token_id, start_t, end_t)], where t is the downsampled time step (0-based, within [0, T-1])
     """
     if len(token_ids) == 0:
         return []
     if len(token_times) != len(token_ids):
-        # fallback：没有 timesteps 就给每个 token 一个点 span
+        # Fallback: if timesteps are unavailable, assign a point span to each token
         return [(tid, min(i, T - 1), min(i, T - 1)) for i, tid in enumerate(token_ids)]
 
-    # 保证单调（理论上 timesteps 已经单调，但做一次保险）
+    # Ensure monotonicity (timesteps should already be monotonic in theory, but enforce it for safety)
     times = [max(0, min(int(t), T - 1)) for t in token_times]
     for i in range(1, len(times)):
         if times[i] < times[i - 1]:
             times[i] = times[i - 1]
 
-    # 用相邻 token 的时间中点切分区间
+    # Split intervals using the midpoint between adjacent token times
     cuts = []
     for i in range(len(times) - 1):
         mid = (times[i] + times[i + 1]) // 2
@@ -338,9 +335,9 @@ def timesteps_to_spans(token_ids: List[int], token_times: List[int], T: int):
         spans.append((tid, start, end))
     return spans
 
-# # =========================
-# # TemporalRescale
-# # =========================
+# =========================
+# TemporalRescale
+# =========================
 # def temporal_rescale(video_tensor: torch.Tensor, scale=0.2):
 #     """
 #     video_tensor: [T, C, H, W]
@@ -353,12 +350,12 @@ def timesteps_to_spans(token_ids: List[int], token_times: List[int], T: int):
 
 #     new_len = int(T * (L + (U - L) * random.random()))
 
-#     # 长度限制
+#     # Length constraints
 #     min_len = 32
 #     max_len = 230
 #     new_len = max(min_len, min(new_len, max_len))
 
-#     # 保证 (new_len - 4) % 4 == 0
+#     # Ensure (new_len - 4) % 4 == 0
 #     if (new_len - 4) % 4 != 0:
 #         new_len += 4 - (new_len - 4) % 4
 
@@ -379,9 +376,9 @@ def apply_video_train_transform(imgs):
     """
     # 1 resize
     imgs = [TF.resize(img, (256, 256)) for img in imgs]
-    # 2 随机 crop 参数（整段视频统一）
+    # 2 Random crop parameters (consistent across the entire video)
     i, j, h, w = transforms.RandomCrop.get_params(imgs[0], (224, 224))
-    # 3 随机翻转
+    # 3 Random flip
     do_flip = torch.rand(1).item() < 0.5
     out = []
     for img in imgs:
@@ -389,11 +386,11 @@ def apply_video_train_transform(imgs):
         if do_flip:
             img = TF.hflip(img)
         img = TF.to_tensor(img)
-        # 归一化方式
-        img = img * 2.0 - 1.0  # 等价于 /127.5 -1
+        # Normalization method
+        img = img * 2.0 - 1.0  # Equivalent to /127.5 -1
         out.append(img)
     video = torch.stack(out, dim=0)  # [T, C, H, W]
-    # # 4 加入 TemporalRescale
+    # # 4 Add TemporalRescale
     # video = temporal_rescale(video, scale=0.2)
     return video
 
@@ -409,7 +406,7 @@ def apply_video_eval_transform(imgs):
         img = TF.resize(img, (256, 256))
         img = TF.center_crop(img, 224)
         img = TF.to_tensor(img)
-        # 归一化
+        # Normalize
         img = img * 2.0 - 1.0
         out.append(img)
 
@@ -421,14 +418,14 @@ def apply_video_eval_transform(imgs):
 
 # def apply_video_train_transform(imgs: List[Image.Image]) -> torch.Tensor:
 #     """
-#     对整段视频统一随机增强
+#     Apply consistent random augmentation to the entire video
 #     return: [T, C, 224, 224]
 #     """
-#     # 1 resize（统一）
+#     # 1 resize (consistent)
 #     imgs = [TF.resize(img, (256, 256)) for img in imgs]
-#     # 2 随机 crop 参数（只采样一次）
+#     # 2 Random crop parameters (sample only once)
 #     i, j, h, w = transforms.RandomCrop.get_params(imgs[0], (224, 224))
-#     # 3 随机翻转（只采样一次）
+#     # 3 Random flip (sample only once)
 #     do_flip = torch.rand(1).item() < 0.5
 
 #     out = []
@@ -445,7 +442,7 @@ def apply_video_eval_transform(imgs):
 
 # def apply_video_eval_transform(imgs: List[Image.Image]) -> torch.Tensor:
 #     """
-#     dev/test 使用 deterministic 处理
+#     Use deterministic processing for dev/test
 #     return: [T, C, 224, 224]
 #     """
 #     out = []
@@ -492,9 +489,6 @@ def collate_fn(samples: List[Sample], blank_id: int = 0, is_train: bool = True):
     for i, ft in enumerate(frame_tensors):
         frames_pad[i, :ft.shape[0]] = ft
 
-    # lengths_out = [ (t // 2) // 2 for t in orig_lengths ]
-    # lengths_out = torch.tensor(orig_lengths, dtype=torch.long)
-    # lengths_out_t = torch.tensor(lengths_out, dtype=torch.long)
     orig_lengths_t = torch.tensor(orig_lengths, dtype=torch.long)
 
     ctc_targets = []
@@ -524,9 +518,7 @@ def evaluate_loader_wer(model: nn.Module, loader: DataLoader, id2gloss: Dict[int
             continue
         frames, frame_labels_ds, lengths_out, ctc_targets, target_lengths, names, orig_lengths_for_span = batch
         frames = frames.to(DEVICE, non_blocking=True)
-        # logits, feats = model(frames)  # [B, T', V]
         logits, lengths_ds = model(frames, lengths_out)
-        # lengths_ds = lengths_out // 2 // 2
         lengths_ds = torch.clamp(lengths_ds, min=1)
         B, Tprime, V = logits.shape
         preds = logits.argmax(dim=-1)
@@ -587,10 +579,8 @@ def infer_test_and_save(model: nn.Module, test_loader: DataLoader, decoder: CTCB
             continue
         frames, frame_labels_ds, lengths_out, ctc_targets, target_lengths, names, orig_lengths_for_span = batch
         frames = frames.to(DEVICE, non_blocking=True)
-        # logits, feats = model(frames)  # [B, T', V]
         logits, lengths_ds = model(frames, lengths_out)
         B, Tprime, V = logits.shape
-        # lengths_ds = lengths_out // 2 // 2
         lengths_ds = torch.clamp(lengths_ds, min=1)
         
         beam_results, timesteps, out_lens = decode_with_ctcdecoder(
@@ -612,7 +602,7 @@ def infer_test_and_save(model: nn.Module, test_loader: DataLoader, decoder: CTCB
             hyp_ids = beam_results[i, 0, :out_len].tolist()
             hyp_times = timesteps[i, 0, :out_len].tolist()
 
-            # 安全过滤
+            # Safe filtering
             hyp_pairs = [(tid, tt) for tid, tt in zip(hyp_ids, hyp_times) if tid != blank_id and tid in id2gloss]
             hyp_ids_f = [p[0] for p in hyp_pairs]
             hyp_times_f = [p[1] for p in hyp_pairs]
@@ -627,8 +617,6 @@ def infer_test_and_save(model: nn.Module, test_loader: DataLoader, decoder: CTCB
                     orig_T = orig_lengths_for_span[i].item()
                     L = lengths_ds[i].item()
                     ratio = orig_T / L
-                    # start_frame = s_t * DOWNSAMPLE_FACTOR + 1
-                    # end_frame = e_t * DOWNSAMPLE_FACTOR + DOWNSAMPLE_FACTOR
                     start_frame = int(s_t * ratio) + 1
                     end_frame = int((e_t + 1) * ratio)
                     formatted.append(f"{g}({start_frame}-{end_frame})")
@@ -650,14 +638,14 @@ def infer_test_and_save(model: nn.Module, test_loader: DataLoader, decoder: CTCB
 # Main
 # =========================
 def main():
-    # 1. 读取 CSV
+    # 1. Read CSV
     train_names, train_map = parse_phoenix_corpus(TRAIN_CSV)
     dev_names, dev_map = parse_phoenix_corpus(DEV_CSV)
     test_names, test_map = parse_phoenix_corpus(TEST_CSV)
 
     print(f"train={len(train_names)} dev={len(dev_names)} test={len(test_names)}")
 
-    # 2. 构建 vocab（仅 train）
+    # 2. Build vocab (train only)
     gloss_set = set()
     for seq in train_map.values():
         for g in seq:
@@ -686,7 +674,7 @@ def main():
         persistent_workers=True,
     )
     
-    # 用于计算 train WER（不做增强）
+    # Used to compute train WER (without augmentation)
     train_eval_loader = DataLoader(
         train_ds,
         batch_size=BATCH_SIZE,
@@ -733,7 +721,7 @@ def main():
         beam_width=10,
         blank_id=blank_id,
         num_processes=8,
-        log_probs_input=True,   # 传 log_softmax 之后的 log_probs
+        log_probs_input=True,   # Pass log_probs after log_softmax
     )
 
     ctc_loss_fn = nn.CTCLoss(blank=blank_id, reduction="none", zero_infinity=False)
@@ -752,21 +740,18 @@ def main():
                 continue
             frames, frame_labels_ds, lengths_out, ctc_targets, target_lengths, names, orig_lengths_for_span = batch
             frames = frames.to(DEVICE, non_blocking=True)
-            lengths_out = lengths_out.to(DEVICE, non_blocking=True) # lengths_out实为原始长度
-            # # 下采样两次 MaxPool1d(stride=2)
-            # lengths_ds = lengths_out // 2
-            # lengths_ds = lengths_ds // 2
+            lengths_out = lengths_out.to(DEVICE, non_blocking=True) # lengths_out actually stores the original lengths
             ctc_targets = ctc_targets.to(DEVICE, non_blocking=True)
             target_lengths = target_lengths.to(DEVICE, non_blocking=True)
 
             # logits, feats = model(frames)  # [B, T', V]
-            logits, lengths_ds = model(frames, lengths_out) # lengths_out实为原始长度 length_ds是下采样后//4的长度
+            logits, lengths_ds = model(frames, lengths_out) # lengths_out stores the original lengths; lengths_ds is the downsampled //4 length
             lengths_ds = torch.clamp(lengths_ds, min=1)
             B, Tprime, V = logits.shape
 
             # ---- blank ratio (train) ----
             with torch.no_grad():
-                preds = logits.argmax(dim=-1) # 用argmax简单检测一下blank率
+                preds = logits.argmax(dim=-1) # Use argmax for a simple check of the blank ratio
                 mask_valid = torch.arange(Tprime, device=DEVICE).unsqueeze(0) < lengths_ds.unsqueeze(1)
                 preds_valid = preds[mask_valid]
                 blank_ratio_train = (

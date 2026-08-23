@@ -1,4 +1,4 @@
-# 训练一个epoch10min；推理一次dev0.5min；推理一次test10min
+# Training one epoch takes 10min; one dev inference takes 0.5min; one test inference takes 10min
 import os
 import re
 import json
@@ -26,17 +26,17 @@ from ctcdecode import CTCBeamDecoder
 # User configs (PHOENIX-2014-T)
 # =========================
 
-TRAIN_FRAMES_ROOT = "/root/autodl-tmp/z-csl-data/PHOENIX-2014-T-release-v3/PHOENIX-2014-T/features/fullFrame-210x260px/train"
-DEV_FRAMES_ROOT   = "/root/autodl-tmp/z-csl-data/PHOENIX-2014-T-release-v3/PHOENIX-2014-T/features/fullFrame-210x260px/dev"
-TEST_FRAMES_ROOT  = "/root/autodl-tmp/z-csl-data/PHOENIX-2014-T-release-v3/PHOENIX-2014-T/features/fullFrame-210x260px/test"
+TRAIN_FRAMES_ROOT = "/PHOENIX-2014-T-release-v3/PHOENIX-2014-T/features/fullFrame-210x260px/train"
+DEV_FRAMES_ROOT   = "/PHOENIX-2014-T-release-v3/PHOENIX-2014-T/features/fullFrame-210x260px/dev"
+TEST_FRAMES_ROOT  = "/PHOENIX-2014-T-release-v3/PHOENIX-2014-T/features/fullFrame-210x260px/test"
 
-TRAIN_ANN = "/root/zjf/bkbs-signcot/prompts/phoenix-T/phoenix-T_train_annotation.txt"
+TRAIN_ANN = "/prompts/phoenix-T/phoenix-T_train_annotation.txt"
 
-DEV_CSV  = "/root/autodl-tmp/z-csl-data/PHOENIX-2014-T-release-v3/PHOENIX-2014-T/annotations/manual/PHOENIX-2014-T.dev.corpus.csv"
-TEST_CSV = "/root/autodl-tmp/z-csl-data/PHOENIX-2014-T-release-v3/PHOENIX-2014-T/annotations/manual/PHOENIX-2014-T.test.corpus.csv"
+DEV_CSV  = "/PHOENIX-2014-T-release-v3/PHOENIX-2014-T/annotations/manual/PHOENIX-2014-T.dev.corpus.csv"
+TEST_CSV = "/PHOENIX-2014-T-release-v3/PHOENIX-2014-T/annotations/manual/PHOENIX-2014-T.test.corpus.csv"
 
-LOG_PATH = "/root/autodl-tmp/z-csl-data/pT-cslr-ce+ctc-ta.jsonl"
-SAVE_ROOT_TMPL = "/root/autodl-tmp/z-csl-data/pT-cslr-ce+ctc-ta_epoch{ep}"
+LOG_PATH = "/pT-cslr-ce+ctc-ta.jsonl"
+SAVE_ROOT_TMPL = "/pT-cslr-ce+ctc-ta_epoch{ep}"
 
 EPOCHS = 60
 BATCH_SIZE = 2
@@ -68,46 +68,46 @@ DOWNSAMPLE_FACTOR = 4  # due to 2x MaxPool1d stride2
 
 def temporal_rescale_with_labels(
     frames: torch.Tensor,           # [T, C, H, W]
-    spans: List[Tuple[int, int]],   # 原始标注区间 (1-based inclusive)
-    scale: float                    # 缩放比例
+    spans: List[Tuple[int, int]],   # Original annotation spans (1-based inclusive)
+    scale: float                    # Scaling factor
 ) -> Tuple[torch.Tensor, List[Tuple[int, int]]]:
     """
-    同步缩放视频帧和标注区间
+    Scale video frames and annotation spans synchronously
     
     Args:
         frames: [T, C, H, W]
         spans: [(start, end), ...] 1-based inclusive
-        scale: 缩放比例
+        scale: Scaling factor
     
     Returns:
         scaled_frames: [T_new, C, H, W]
-        scaled_spans: 缩放后的标注区间 (1-based inclusive)
+        scaled_spans: Scaled annotation spans (1-based inclusive)
     """
     T = frames.shape[0]
     T_new = max(1, int(T * scale))
     
-    # 1. 帧缩放：线性插值采样
+    # 1. Frame scaling: linear interpolation sampling
     indices = torch.linspace(0, T-1, T_new).round().long()
     scaled_frames = frames[indices]  # [T_new, C, H, W]
     
-    # 2. 标注区间缩放：将原始索引映射到新索引
-    # 原始索引范围: 1 到 T (1-based)
-    # 新索引范围: 1 到 T_new (1-based)
+    # 2. Annotation span scaling: map original indices to new indices
+    # Original index range: 1 to T (1-based)
+    # New index range: 1 to T_new (1-based)
     scaled_spans = []
     for start, end in spans:
-        # 转换到0-based索引
+        # Convert to 0-based indices
         start_0 = start - 1
         end_0 = end - 1
         
-        # 映射到新索引
+        # Map to new indices
         new_start_0 = start_0 * scale
         new_end_0 = end_0 * scale
         
-        # 转回1-based，并确保在有效范围内
+        # Convert back to 1-based and ensure indices stay within the valid range
         new_start = max(1, min(T_new, int(round(new_start_0)) + 1))
         new_end = max(1, min(T_new, int(round(new_end_0)) + 1))
         
-        # 确保start <= end
+        # Ensure start <= end
         if new_start > new_end:
             new_start, new_end = new_end, new_start
         
@@ -131,19 +131,19 @@ def apply_video_train_transform(imgs, spans=None, temporal_scale_range=(0.8, 1.2
     """
     Args:
         imgs: List[PIL.Image]
-        spans: 原始标注区间列表 (可选)
-        temporal_scale_range: 缩放范围，(0.8, 1.2) 表示随机缩放到80%-120%
+        spans: List of original annotation spans (optional)
+        temporal_scale_range: Scaling range; (0.8, 1.2) means random scaling to 80%-120%
     
     Returns:
-        frames: [T, C, H, W] 增强后的帧
-        spans: 缩放后的标注区间 (如果输入spans不为None)
+        frames: [T, C, H, W] augmented frames
+        spans: Scaled annotation spans (if input spans is not None)
     """
-    # 1. 空间增强
+    # 1. Spatial augmentation
     ## 1.1 resize
     imgs = [TF.resize(img, (256, 256)) for img in imgs]
-    ## 1.2 随机 crop （参数整段视频统一）
+    ## 1.2 Random crop (same parameters for the entire video)
     i, j, h, w = transforms.RandomCrop.get_params(imgs[0], (224, 224))
-    ## 1.3 随机 旋转
+    ## 1.3 Random rotation
     do_flip = torch.rand(1).item() < 0.5
     frames = []
     for img in imgs:
@@ -151,25 +151,25 @@ def apply_video_train_transform(imgs, spans=None, temporal_scale_range=(0.8, 1.2
         if do_flip:
             img = TF.hflip(img)
         img = TF.to_tensor(img)
-        img = img * 2.0 - 1.0 # 归一化方式 等价于 /127.5 -1
+        img = img * 2.0 - 1.0 # Normalization, equivalent to /127.5 - 1
         frames.append(img)
     video = torch.stack(frames, dim=0)  # [T, C, H, W]
-    # 2. 时序缩放
+    # 2. Temporal scaling
     if spans is not None and len(spans) > 0:
         scale = torch.empty(1).uniform_(*temporal_scale_range).item()
         T = video.shape[0]
         gloss_len = len(spans)
         T_new = int(T * scale)
         T_ds = (T_new // 2) // 2
-        # 核心约束
+        # Core constraint
         min_required = gloss_len + 2
         if T_ds < min_required:
-            # 不做增强
+            # Skip augmentation
             return video, spans
-        # 再做 scaling
+        # Apply scaling
         video, scaled_spans = temporal_rescale_with_labels(video, spans, scale)
         return video, scaled_spans
-    # 没有标注时，只返回video，第二个返回值为None
+    # When no annotations are available, return only the video and None as the second value
     return video, None
 
 # =========================
@@ -184,7 +184,7 @@ def apply_video_eval_transform(imgs):
         img = TF.resize(img, (256, 256))
         img = TF.center_crop(img, 224)
         img = TF.to_tensor(img)
-        # 归一化
+        # Normalization
         img = img * 2.0 - 1.0
         out.append(img)
 
@@ -292,7 +292,7 @@ class CTCModel(nn.Module):
         # mid_logits = self.mid_fc(feats)
         logits = self.fc(out)
         
-        mid_logits = self.fc(feats)  # 1D-CNN 后的中间监督，共享分类器
+        mid_logits = self.fc(feats)  # Intermediate supervision after 1D-CNN, sharing the classifier
 
         return mid_logits, logits, out, lengths_ds
 
@@ -414,23 +414,23 @@ def decode_with_ctcdecoder(
 
 def timesteps_to_spans(token_ids: List[int], token_times: List[int], T: int):
     """
-    用 ctcdecode 返回的 token 峰值时间 timesteps 做一个稳定的 span 近似。
-    token_times 长度应 == len(token_ids).
-    输出 [(token_id, start_t, end_t)]，t 是下采样后的时间步（0-based, within [0, T-1]）
+    Use the token peak timesteps returned by ctcdecode to obtain a stable span approximation.
+    The length of token_times should equal len(token_ids).
+    Output [(token_id, start_t, end_t)], where t is the downsampled timestep (0-based, within [0, T-1])
     """
     if len(token_ids) == 0:
         return []
     if len(token_times) != len(token_ids):
-        # fallback：没有 timesteps 就给每个 token 一个点 span
+        # Fallback: if timesteps are unavailable, assign each token a point span
         return [(tid, min(i, T - 1), min(i, T - 1)) for i, tid in enumerate(token_ids)]
 
-    # 保证单调（理论上 timesteps 已经单调，但做一次保险）
+    # Ensure monotonicity (timesteps should theoretically already be monotonic, but enforce it for safety)
     times = [max(0, min(int(t), T - 1)) for t in token_times]
     for i in range(1, len(times)):
         if times[i] < times[i - 1]:
             times[i] = times[i - 1]
 
-    # 用相邻 token 的时间中点切分区间
+    # Split intervals using the midpoint between adjacent token times
     cuts = []
     for i in range(len(times) - 1):
         mid = (times[i] + times[i + 1]) // 2
@@ -454,9 +454,9 @@ def build_frame_labels_from_spans(
     spans_1based: List[Tuple[int, int]],
     blank_id: int = 0,
     ignore_index: int = -100,
-    shrink_ratio: float = 0.3, # 默认值，实际会在collate_fn中动态传入
+    shrink_ratio: float = 0.3, # Default value; dynamically passed in collate_fn
 ):
-    labels = [ignore_index] * T   # 默认 ignore
+    labels = [ignore_index] * T   # Ignore by default
 
     for gid, (s1, e1) in zip(gloss_ids, spans_1based):
         s0 = max(0, s1 - 1)
@@ -485,14 +485,14 @@ def viterbi_ctc_alignment(logits: torch.Tensor,
     """
     logits: [T', V]
     target: [U]
-    return alignment: [T'] 每帧一个label（含blank）
+    return alignment: [T'] one label per frame (including blank)
     """
     T, V = logits.shape
     U = target.size(0)
 
     log_probs = F.log_softmax(logits, dim=-1)
 
-    # 扩展目标 [b,y1,b,y2,...,b]
+    # Expand target [b,y1,b,y2,...,b]
     ext = torch.full((2 * U + 1,), blank_id,
                      dtype=torch.long, device=logits.device)
     ext[1::2] = target
@@ -521,7 +521,7 @@ def viterbi_ctc_alignment(logits: torch.Tensor,
     for t in reversed(range(T)):
         alignment.append(ext[s].item())
         if t > 0:
-            # 回溯
+            # Backtrack
             candidates = []
             if s >= 0:
                 candidates.append((dp[t - 1, s], s))
@@ -582,7 +582,7 @@ class pTCSLRDataset(Dataset):
         self.name2test_gloss = name2test_gloss or {}
         self.gloss2id = gloss2id
         self.is_train_or_dev = is_train_or_dev
-        self.current_shrink_ratio = 0.3  # 默认值，会在训练循环中更新
+        self.current_shrink_ratio = 0.3  # Default value; updated in the training loop
         self.downsample_factor = downsample_factor
         
         self.names = []
@@ -603,7 +603,7 @@ class pTCSLRDataset(Dataset):
             if T == 0:
                 continue
 
-            # ------------- 获取 gloss 序列长度 -------------
+            # ------------- Get gloss sequence length -------------
             if is_train_or_dev:
                 info = self.name2gloss_spans.get(name, None)
                 if info is None:
@@ -614,7 +614,7 @@ class pTCSLRDataset(Dataset):
 
             gloss_len = len(gloss_seq)
 
-            # ------------- 判断是否合法 -------------
+            # ------------- Check validity -------------
             T_ds = T // self.downsample_factor
 
             if filter_illegal and T_ds < gloss_len:
@@ -704,16 +704,16 @@ def collate_fn(samples: List[Sample], blank_id: int = 0, shrink_ratio: float = 0
         if is_train:
             if s.spans is not None:
                 frames, scaled_spans = apply_video_train_transform(pil_imgs, spans=s.spans)
-                # 更新spans为缩放后的
+                # Update spans to the scaled spans
                 spans_list.append(scaled_spans)
             else:
                 frames = apply_video_train_transform(pil_imgs)
                 spans_list.append(None)
         else:
             frames = apply_video_eval_transform(pil_imgs)
-            spans_list.append(s.spans)  # 测试时不缩放
+            spans_list.append(s.spans)  # No scaling during evaluation
         frame_tensors.append(frames)
-        orig_lengths.append(frames.shape[0]) # 现在frames.shape[0]是缩放后的长度
+        orig_lengths.append(frames.shape[0]) # frames.shape[0] is now the scaled length
         gloss_ids_list.append(s.gloss_ids)
         # spans_list.append(s.spans)
 
@@ -729,11 +729,8 @@ def collate_fn(samples: List[Sample], blank_id: int = 0, shrink_ratio: float = 0
     # model output lengths (two stride-2 pools)
     lengths_out = [ (t // 2) // 2 for t in orig_lengths ]
     Lmax = max(lengths_out) if max(lengths_out) > 0 else 1
-    # lengths_out_t = torch.tensor(lengths_out, dtype=torch.long)
     lengths_out_t = torch.tensor(orig_lengths, dtype=torch.long)
 
-    # frame labels downsampled for CE (only meaningful for train/dev)
-    # frame_labels_ds = torch.full((B, Lmax), fill_value=blank_id, dtype=torch.long)
     frame_labels_ds = torch.full((B, Lmax), fill_value=-100, dtype=torch.long)
 
     # CTC targets
@@ -747,7 +744,7 @@ def collate_fn(samples: List[Sample], blank_id: int = 0, shrink_ratio: float = 0
         if spans_list[i] is not None and gloss_ids_list[i] is not None:
             # train/dev: build frame labels from spans, then downsample
             per_frame = build_frame_labels_from_spans(
-                T=t, gloss_ids=gloss_ids_list[i], spans_1based=spans_list[i], blank_id=blank_id, shrink_ratio=shrink_ratio  # 动态传入shrink_ratio
+                T=t, gloss_ids=gloss_ids_list[i], spans_1based=spans_list[i], blank_id=blank_id, shrink_ratio=shrink_ratio  # Dynamically pass shrink_ratio
             )
             ds = downsample_labels_by_factor4_majority(per_frame)
             ds = ds[:L]
@@ -785,7 +782,6 @@ def evaluate_loader_wer(model: nn.Module, loader: DataLoader, id2gloss: Dict[int
         frames, frame_labels_ds, lengths_out, ctc_targets, target_lengths, names = batch
         frames = frames.to(DEVICE, non_blocking=True)
         lengths_out = lengths_out.to(DEVICE, non_blocking=True)
-        # mid_logits, logits, feats = model(frames)  # [B, T', V]
         mid_logits, logits, feats, lengths_out = model(frames, lengths_out)
         B, Tprime, V = logits.shape
         preds = logits.argmax(dim=-1)  # [B, T']
@@ -814,7 +810,6 @@ def evaluate_loader_wer(model: nn.Module, loader: DataLoader, id2gloss: Dict[int
             out_len = int(out_lens[i, 0].item())
             # ---- WER ----
             hyp_ids = beam_results[i, 0, :out_len].tolist()
-            # hyp = [id2gloss[x] for x in hyp_ids if x in id2gloss]
             hyp = [id2gloss[x] for x in hyp_ids if (x != blank_id and x in id2gloss)]
 
             ref_len = int(target_lengths[i].item())
@@ -880,7 +875,7 @@ def infer_test_and_save(model: nn.Module, test_loader: DataLoader, decoder: CTCB
             hyp_ids = beam_results[i, 0, :out_len].tolist()
             hyp_times = timesteps[i, 0, :out_len].tolist()
 
-            # 安全过滤
+            # Safe filtering
             hyp_pairs = [(tid, tt) for tid, tt in zip(hyp_ids, hyp_times) if tid != blank_id and tid in id2gloss]
             hyp_ids_f = [p[0] for p in hyp_pairs]
             hyp_times_f = [p[1] for p in hyp_pairs]
@@ -1066,7 +1061,7 @@ def main():
         beam_width=10,
         blank_id=blank_id,
         num_processes=8,
-        log_probs_input=True,   # 传 log_softmax 之后的 log_probs
+        log_probs_input=True,   # Pass log_probs after log_softmax
     )
 
     ctc_loss_fn = nn.CTCLoss(blank=blank_id, reduction="none", zero_infinity=False)
@@ -1080,15 +1075,15 @@ def main():
     best_dev_wer = float("inf")
 
     for epoch in range(EPOCHS):
-        # ===== 动态策略调整 =====
-        # 1. 动态shrink_ratio
+        # ===== Dynamic strategy adjustment =====
+        # 1. Dynamic shrink_ratio
         if epoch < 5:
             current_shrink_ratio = 0.2
         elif epoch < 10:
             current_shrink_ratio = 0.15
         else:
             current_shrink_ratio = 0.1
-        # 更新dataset中的shrink_ratio，用于collate_fn
+        # Update shrink_ratio in the dataset for collate_fn
         train_ds.current_shrink_ratio = current_shrink_ratio
         
         # 2. dynamic lambda for CTC and CE        
@@ -1097,9 +1092,9 @@ def main():
             lambda_ctc = 0.3
 
         elif epoch <= 20:
-            t = (epoch - 9) / 11.0  # 20-9=11个epoch的过渡期
-            lambda_ce = 1.0 * (1 - t) + 0.2 * t  # CE从1.0线性降到0.2
-            lambda_ctc = 0.3 * (1 - t) + 1.0 * t  # CTC从0.3线性升到1.0
+            t = (epoch - 9) / 11.0  # 11 epochs of transition from epoch 9 to 20
+            lambda_ce = 1.0 * (1 - t) + 0.2 * t  # CE decreases linearly from 1.0 to 0.2
+            lambda_ctc = 0.3 * (1 - t) + 1.0 * t  # CTC increases linearly from 0.3 to 1.0
 
         else:
             lambda_ce = 0.2

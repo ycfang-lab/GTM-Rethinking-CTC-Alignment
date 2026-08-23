@@ -1,4 +1,4 @@
-# 训练一个epoch30min；推理一次dev2min；推理一次test25min
+# Training one epoch takes 30min; one dev inference takes 2min; one test inference takes 25min
 import os
 import json
 import csv
@@ -23,12 +23,12 @@ from ctcdecode import CTCBeamDecoder
 # CSL-Daily configs
 # =========================
 
-FRAMES_ROOT = "/root/autodl-tmp/z-csl-data/CSL-Daily/frames_512x512"
+FRAMES_ROOT = "/CSL-Daily/frames_512x512"
 
-SPLIT_FILE = "/root/autodl-tmp/z-csl-data/CSL-Daily/sentence_label/split_1.txt"
-VIDEO_MAP_CSV = "/root/autodl-tmp/z-csl-data/CSL-Daily/sentence_label/video_map.csv"
+SPLIT_FILE = "/CSL-Daily/sentence_label/split_1.txt"
+VIDEO_MAP_CSV = "/CSL-Daily/sentence_label/video_map.csv"
 
-LOG_PATH = "/root/autodl-tmp/z-csl-data/CSL-cslr-ctc+beam.jsonl"
+LOG_PATH = "/CSL-cslr-ctc+beam.jsonl"
 
 EPOCHS = 50
 BATCH_SIZE = 2
@@ -124,7 +124,7 @@ class CTCModel(nn.Module):
 
 
 # =========================
-# 数据读取部分
+# Data loading
 # =========================
 
 def read_split_file(path):
@@ -269,23 +269,23 @@ def decode_with_ctcdecoder(
 
 def timesteps_to_spans(token_ids: List[int], token_times: List[int], T: int):
     """
-    用 ctcdecode 返回的 token 峰值时间 timesteps 做一个稳定的 span 近似。
-    token_times 长度应 == len(token_ids).
-    输出 [(token_id, start_t, end_t)]，t 是下采样后的时间步（0-based, within [0, T-1]）
+    Use the token peak timesteps returned by ctcdecode to obtain a stable span approximation.
+    The length of token_times should equal len(token_ids).
+    Return [(token_id, start_t, end_t)], where t is the downsampled time step (0-based, within [0, T-1]).
     """
     if len(token_ids) == 0:
         return []
     if len(token_times) != len(token_ids):
-        # fallback：没有 timesteps 就给每个 token 一个点 span
+        # Fallback: if timesteps are unavailable, assign a point span to each token
         return [(tid, min(i, T - 1), min(i, T - 1)) for i, tid in enumerate(token_ids)]
 
-    # 保证单调（理论上 timesteps 已经单调，但做一次保险）
+    # Ensure monotonicity (timesteps should already be monotonic in theory, but enforce it for safety)
     times = [max(0, min(int(t), T - 1)) for t in token_times]
     for i in range(1, len(times)):
         if times[i] < times[i - 1]:
             times[i] = times[i - 1]
 
-    # 用相邻 token 的时间中点切分区间
+    # Split intervals using the midpoint between adjacent token times
     cuts = []
     for i in range(len(times) - 1):
         mid = (times[i] + times[i + 1]) // 2
@@ -304,37 +304,20 @@ def timesteps_to_spans(token_ids: List[int], token_times: List[int], T: int):
 # Collate
 # =========================
 
-# TRAIN_TRANSFORM = transforms.Compose([
-#     transforms.Resize((256, 256)),
-#     transforms.RandomCrop(224),
-#     transforms.RandomHorizontalFlip(0.5),
-#     transforms.ToTensor(),
-#     transforms.Normalize([0.485,0.456,0.406],
-#                          [0.229,0.224,0.225]),
-# ])
-
-# DEVTEST_TRANSFORM = transforms.Compose([
-#     transforms.Resize(256),
-#     transforms.CenterCrop(224),
-#     transforms.ToTensor(),
-#     transforms.Normalize([0.485,0.456,0.406],
-#                          [0.229,0.224,0.225]),
-# ])
-
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
 
 def apply_video_train_transform(imgs: List[Image.Image]) -> torch.Tensor:
     """
-    对整段视频统一随机增强
+    Apply consistent random augmentation to the entire video
     return: [T, C, 224, 224]
     """
-    # 1 resize（统一）
+    # 1 resize (consistent)
     imgs = [TF.resize(img, (256, 256)) for img in imgs]
-    # 2 随机 crop 参数（只采样一次）
+    # 2 random crop parameters (sample only once)
     i, j, h, w = transforms.RandomCrop.get_params(imgs[0], (224, 224))
-    # 3 随机翻转（只采样一次）
+    # 3 random flip (sample only once)
     do_flip = torch.rand(1).item() < 0.5
 
     out = []
@@ -351,7 +334,7 @@ def apply_video_train_transform(imgs: List[Image.Image]) -> torch.Tensor:
 
 def apply_video_eval_transform(imgs: List[Image.Image]) -> torch.Tensor:
     """
-    dev/test 使用 deterministic 处理
+    Use deterministic processing for dev/test
     return: [T, C, 224, 224]
     """
 
@@ -427,13 +410,10 @@ def evaluate_loader_wer(model: nn.Module, loader: DataLoader, id2gloss: Dict[int
     for batch in loader:
         if batch is None:
             continue
-        # frames, frame_labels_ds, lengths_out, ctc_targets, target_lengths, names, orig_lengths_for_span = batch
         frames, lengths_out, ctc_targets, target_lengths, names, orig_lengths_for_span = batch
         frames = frames.to(DEVICE, non_blocking=True)
         lengths_out = lengths_out.to(DEVICE)
-        # logits, feats = model(frames)  # [B, T', V]
         logits, lengths_ds = model(frames, lengths_out)
-        # lengths_ds = lengths_out // 2 // 2
         lengths_ds = torch.clamp(lengths_ds, min=1)
         B, Tprime, V = logits.shape
         preds = logits.argmax(dim=-1)
@@ -520,7 +500,7 @@ def infer_test_and_save(model: nn.Module, test_loader: DataLoader, decoder: CTCB
             hyp_ids = beam_results[i, 0, :out_len].tolist()
             hyp_times = timesteps[i, 0, :out_len].tolist()
 
-            # 安全过滤
+            # Safe filtering
             hyp_pairs = [(tid, tt) for tid, tt in zip(hyp_ids, hyp_times) if tid != blank_id and tid in id2gloss]
             hyp_ids_f = [p[0] for p in hyp_pairs]
             hyp_times_f = [p[1] for p in hyp_pairs]
@@ -535,8 +515,6 @@ def infer_test_and_save(model: nn.Module, test_loader: DataLoader, decoder: CTCB
                     orig_T = orig_lengths_for_span[i].item()
                     L = lengths_ds[i].item()
                     ratio = orig_T / L
-                    # start_frame = s_t * DOWNSAMPLE_FACTOR + 1
-                    # end_frame = e_t * DOWNSAMPLE_FACTOR + DOWNSAMPLE_FACTOR
                     start_frame = int(s_t * ratio) + 1
                     end_frame = int((e_t + 1) * ratio)
                     formatted.append(f"{g}({start_frame}-{end_frame})")
@@ -579,10 +557,6 @@ def main():
     gloss2id = {g: i + 1 for i, g in enumerate(gloss_list)}
     id2gloss = {v: k for k, v in gloss2id.items()}
     num_gloss = len(gloss2id)
-
-    # train_ds = CSLDailyDataset(train_names, gloss_map, gloss2id, downsample_factor=4, filter_illegal=True)
-    # dev_ds = CSLDailyDataset(dev_names, gloss_map, gloss2id, downsample_factor=4, filter_illegal=True)
-    # test_ds = CSLDailyDataset(test_names, gloss_map, gloss2id, downsample_factor=4, filter_illegal=True)
 
     train_ds = CSLDailyDataset(
         train_names,
@@ -653,7 +627,6 @@ def main():
         milestones=[20, 30, 40],
         gamma=0.2
     )
-    # ctc_loss_fn = nn.CTCLoss(blank=blank_id, zero_infinity=True)
     ctc_loss_fn = nn.CTCLoss(blank=blank_id, reduction="none", zero_infinity=False)
     
     labels = ["<blk>"] + [id2gloss[i] for i in range(1, num_gloss + 1)]
@@ -662,7 +635,7 @@ def main():
         beam_width=10,
         blank_id=blank_id,
         num_processes=8,
-        log_probs_input=True,   # 传 log_softmax 之后的 log_probs
+        log_probs_input=True,   # Pass log_probs after log_softmax
     )
     
     global_step = 0

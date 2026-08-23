@@ -1,8 +1,7 @@
-## 基于 CTC 损失函数，并强制对齐，
-## 结构resnet18（预训练权重）-1dCNN（k5, p2, k5, p2）-BiLSTM（双向各512隐藏层）-CTC，即CSLR的baseline，
-## 解码使用viterbi动态规划强制对齐策略，给定groundtruth的gloss序列，找到一条强制对齐的概率最大的路径。
-## num_workers=8，训练1个epoch约0.4h。
-## 最新版
+## Based on the CTC loss function with forced alignment,
+## Architecture: ResNet18 (pretrained weights) - 1D CNN (k5, p2, k5, p2) - BiLSTM (512 hidden units in each direction) - CTC, i.e., the CSLR baseline,
+## Decoding uses a Viterbi dynamic-programming forced-alignment strategy: given the ground-truth gloss sequence, find the most probable forced-alignment path.
+## num_workers=8; training one epoch takes about 0.4h.
 
 import os
 import csv
@@ -20,7 +19,7 @@ import torchvision.models as models
 import json
 import time
 
-LOG_PATH = "/root/zjf/bkbs-signcot/log/pT-ctc-span-21lclog.jsonl"
+LOG_PATH = "/log/pT-ctc-span-21lclog.jsonl"
 
 def log_event(data: dict):
     data["time"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -30,11 +29,11 @@ def log_event(data: dict):
 # =========================================================
 # Paths
 # =========================================================
-TRAIN_FRAMES_DIR = "/root/autodl-tmp/z-csl-data/PHOENIX-2014-T-release-v3/PHOENIX-2014-T/features/fullFrame-210x260px/train"
-DEV_FRAMES_DIR = "/root/autodl-tmp/z-csl-data/PHOENIX-2014-T-release-v3/PHOENIX-2014-T/features/fullFrame-210x260px/dev"
+TRAIN_FRAMES_DIR = "/PHOENIX-2014-T-release-v3/PHOENIX-2014-T/features/fullFrame-210x260px/train"
+DEV_FRAMES_DIR = "/PHOENIX-2014-T-release-v3/PHOENIX-2014-T/features/fullFrame-210x260px/dev"
 
-TRAIN_CSV = "/root/autodl-tmp/z-csl-data/PHOENIX-2014-T-release-v3/PHOENIX-2014-T/annotations/manual/PHOENIX-2014-T.train.corpus.csv"
-DEV_CSV = "/root/autodl-tmp/z-csl-data/PHOENIX-2014-T-release-v3/PHOENIX-2014-T/annotations/manual/PHOENIX-2014-T.dev.corpus.csv"
+TRAIN_CSV = "/PHOENIX-2014-T-release-v3/PHOENIX-2014-T/annotations/manual/PHOENIX-2014-T.train.corpus.csv"
+DEV_CSV = "/PHOENIX-2014-T-release-v3/PHOENIX-2014-T/annotations/manual/PHOENIX-2014-T.dev.corpus.csv"
 
 # =========================================================
 # Build gloss vocab + samples
@@ -181,19 +180,19 @@ class CTCModel(nn.Module):
 
 # def get_blank_bias(epoch: int):
 #     if epoch <= 10:
-#         # 强力解 blank 塌缩（完全打平 blank 先验，解锁 gloss path）
+#         # Strongly alleviate blank collapse (completely flatten the blank prior to unlock the gloss path)
 #         return 7.0
 #     elif epoch <= 20:
-#         # 7 -> 5 缓慢释放先验
+#         # 7 -> 5 gradually relax the prior
 #         return 7.0 - (epoch - 10) * (2.0 / 10)
 #     elif epoch <= 30:
-#         # 5 -> 3 从“先验校正”过渡到“数据驱动”
+#         # 5 -> 3 transition from "prior correction" to "data-driven"
 #         return 5.0 - (epoch - 20) * (2.0 / 10)
 #     elif epoch <= 40:
-#         # 3 -> 1 逐步回归标准 CTC
+#         # 3 -> 1 gradually return to standard CTC
 #         return 3.0 - (epoch - 30) * (2.0 / 10)
 #     else:
-#         # 1 -> 0 完全回归标准 CTC
+#         # 1 -> 0 fully return to standard CTC
 #         return max(0.0, 1.0 - (epoch - 40) * (1.0 / 10))
 
 
@@ -201,28 +200,28 @@ class CTCModel(nn.Module):
 # CTC Forced Alignment
 # =========================================================
 def _build_ctc_extended_targets(targets: torch.Tensor, blank: int = 0):
-    # 在target之间和起始末尾插入blank
+    # Insert blanks between targets and at the beginning and end
     L = targets.numel()
     ext = torch.full((2 * L + 1,), blank, dtype=torch.long, device=targets.device)
     ext[1::2] = targets
     return ext
 
 
-def ctc_forced_align_viterbi(log_probs, targets, blank=0, blank_penalty=3.5, warm_frames=3): # 惩罚blank（前后3帧不惩罚）
-    T, C = log_probs.shape # T：帧数
+def ctc_forced_align_viterbi(log_probs, targets, blank=0, blank_penalty=3.5, warm_frames=3): # Penalize blank (no penalty for the first and last 3 frames)
+    T, C = log_probs.shape # T: number of frames
     device = log_probs.device
 
     ext = _build_ctc_extended_targets(targets, blank)
-    S = ext.numel() # S：在ext中gloss的索引，ext 中的状态数（2*L+1）
+    S = ext.numel() # S: gloss index in ext; number of states in ext (2*L+1)
 
     neg_inf = -1e9
     dp = torch.full((T, S), neg_inf, device=device)
-    # dp[t][s]：到第 t 帧为止，走到 ext 的第 s 个位置时，能拿到的最高累计分数（logprob和）
+    # dp[t][s]: the highest cumulative score (sum of log probabilities) obtainable by reaching position s in ext at frame t
     bp = torch.zeros((T, S), dtype=torch.long, device=device)
-    # bp[t][s]：为了回溯最优路径，记录 dp[t][s] 来自哪个前一状态
+    # bp[t][s]: records the previous state from which dp[t][s] came for backtracking the optimal path
 
-    # -------- 初始化（t = 0）--------
-    # 注意：t=0 < warm_frames，所以 blank 不罚
+    # -------- Initialization (t = 0) --------
+    # Note: t=0 < warm_frames, so blank is not penalized
     dp[0, 0] = log_probs[0, ext[0]]
     if S > 1:
         dp[0, 1] = log_probs[0, ext[1]]
@@ -230,19 +229,19 @@ def ctc_forced_align_viterbi(log_probs, targets, blank=0, blank_penalty=3.5, war
     # if S > 1:
     #     dp[0, 1] = log_probs[0, ext[1]]
 
-    # -------- 动态规划 --------
+    # -------- Dynamic programming --------
     for t in range(1, T):
         for s in range(S):
-            # stay：从 s 来到 s
-            best = dp[t - 1, s] # 这一帧继续输出同一个符号（如果 ext[s] 是 A，那就是 A 连续多帧）
+            # stay: transition from s to s
+            best = dp[t - 1, s] # Continue emitting the same symbol at this frame (if ext[s] is A, then A spans multiple consecutive frames)
             prev = s
 
-            # step：从 s-1 来到 s
-            if s - 1 >= 0 and dp[t - 1, s - 1] > best: # 从 blank 走到 A，表示“现在开始 A”；或者从 A 走到 blank，表示“A 结束了，中间插 blank”。
+            # step: transition from s-1 to s
+            if s - 1 >= 0 and dp[t - 1, s - 1] > best: # blank -> A means "A starts now"; A -> blank means "A ends here, with a blank inserted in between".
                 best = dp[t - 1, s - 1]
                 prev = s - 1
 
-            # skip：从 s-2 来到 s（两个gloss之间可能无blank）
+            # skip: transition from s-2 to s (there may be no blank between two glosses)
             if (
                 s - 2 >= 0
                 and ext[s] != blank
@@ -257,17 +256,17 @@ def ctc_forced_align_viterbi(log_probs, targets, blank=0, blank_penalty=3.5, war
             if ext[s] == blank:
                 if warm_frames <= t < T - warm_frames:
                     emit = emit - blank_penalty  # blank penalty
-                # else: 前 warm_frames 或 后 warm_frames，不罚
+                # else: do not penalize the first or last warm_frames
             
             dp[t, s] = best + emit
             bp[t, s] = prev
 
-    # -------- 终止状态选择 --------
+    # -------- Final-state selection --------
     s = S - 1
     if S - 2 >= 0 and dp[T - 1, S - 2] > dp[T - 1, S - 1]:
         s = S - 2
 
-    # -------- 回溯 --------
+    # -------- Backtracking --------
     states = torch.zeros(T, dtype=torch.long, device=device)
     for t in range(T - 1, -1, -1):
         states[t] = s
@@ -335,7 +334,7 @@ def run_infer_and_save(model, infer_loader, gloss2id, id2gloss, device, out_dir,
     with torch.no_grad():
         for idx, (frames, _, _, _, videos, gt_gloss_seqs) in enumerate(infer_loader):
             frames = frames.to(device)
-            orig_T = frames.shape[1]  # 原始视频帧数
+            orig_T = frames.shape[1]  # Original number of video frames
 
             logits = model(frames)[0]
             log_probs = F.log_softmax(logits, dim=-1)
@@ -365,7 +364,7 @@ def run_infer_and_save(model, infer_loader, gloss2id, id2gloss, device, out_dir,
             # log_probs: [T, C]
             # blank id = 0
             blank_logp_mean = log_probs[:, 0].mean()
-            # target_ids: 当前视频的 gloss id 序列（不含 blank）
+            # target_ids: gloss ID sequence of the current video (excluding blank)
             target_logp_mean = log_probs[:, target_ids].mean()
             adaptive_blank_penalty = max(4, blank_logp_mean - target_logp_mean - 2)
 
@@ -483,7 +482,7 @@ def main():
             in_lens = torch.clamp(in_lens // 4, min=1)
             logits = model(frames)
             # # ===== blank logit bias (training only) =====
-            # beta = get_blank_bias(epoch + 1)  # epoch 是 0-based
+            # beta = get_blank_bias(epoch + 1)  # epoch is 0-based
             # if beta > 0:
             #     logits[..., 0] -= beta
             # ===== logit diagnostics (no grad) =====
@@ -527,7 +526,7 @@ def main():
         scheduler.step()
 
         if (epoch + 1) in SAVE_EPOCHS:
-            out_dir = f"/root/autodl-tmp/z-csl-data/pT_ctc_span_epoch{epoch + 1}"
+            out_dir = f"/pT_ctc_span_epoch{epoch + 1}"
             run_infer_and_save(
                 model=model,
                 infer_loader=infer_loader,

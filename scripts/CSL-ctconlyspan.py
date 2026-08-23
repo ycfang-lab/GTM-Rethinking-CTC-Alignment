@@ -1,4 +1,4 @@
-## 用仅ctc+贪心解码，找到大致定位帧
+## Use only CTC + greedy decoding to locate approximate frame positions
 
 import os
 import csv
@@ -20,7 +20,7 @@ import time
 # =========================================================
 # LOG
 # =========================================================
-LOG_PATH = "/root/zjf/bkbs-signcot/log/CSL-ctc-span-21lclog.jsonl"
+LOG_PATH = "log/CSL-ctc-span-21lclog.jsonl"
 
 def log_event(data: dict):
     data["time"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -31,8 +31,8 @@ def log_event(data: dict):
 # =========================================================
 # Paths (CSL-Daily)
 # =========================================================
-FRAMES_DIR = "/root/autodl-tmp/z-csl-data/CSL-Daily/frames_512x512"
-CSV_PATH = "/root/autodl-tmp/z-csl-data/CSL-Daily/sentence_label/video_map.csv"
+FRAMES_DIR = "/CSL-Daily/frames_512x512"
+CSV_PATH = "/CSL-Daily/sentence_label/video_map.csv"
 
 
 # =========================================================
@@ -304,7 +304,7 @@ def run_infer_and_save(model, infer_loader, gloss2id, id2gloss, device, out_dir,
             # log_probs: [T, C]
             # blank id = 0
             blank_logp_mean = log_probs[:, 0].mean()
-            # target_ids: 当前视频的 gloss id 序列（不含 blank）
+            # target_ids: gloss id sequence of the current video (excluding blank)
             target_logp_mean = log_probs[:, target_ids].mean()
             adaptive_blank_penalty = max(4, blank_logp_mean - target_logp_mean - 2)
 
@@ -408,7 +408,7 @@ def main():
         scheduler.step()
 
         if (epoch + 1) in SAVE_EPOCHS:
-            out_dir = f"/root/autodl-tmp/z-csl-data/CSL_ctc_span_epoch{epoch + 1}"
+            out_dir = f"/CSL_ctc_span_epoch{epoch + 1}"
 
             run_infer_and_save(
                 model,

@@ -1,14 +1,16 @@
-## 用大模型api，整合qwen3-vl对每一帧的描述，生成对应的gcot表示并保存为json文件
-## 用mimo-frame_prompt.txt
+## Use a large-model API to integrate Qwen3-VL descriptions for each frame and generate corresponding JSON files
+## Use framedes_prompt.txt
 
-# 当遇到以下情况时会触发重试：
-# 1.无法提取JSON
-# 2.gloss数量与segment数量不一致
-# 总共最多尝试4次（第1次 + 3次重试），每次重试都会重新调用api生成全新的响应内容
+# Retries are triggered in the following cases:
+# 1. JSON cannot be extracted
+# 2. The number of glosses does not match the number of segments
+# A maximum of 4 attempts are made in total (1 initial attempt + 3 retries), and each retry calls the API again to generate a completely new response
 
-## 要把apikey放入environ
+# Cases that still fail after multiple retries and manual extraction are manually processed using the web-based LLM.
 
-# 每成功处理一条训练数据约30-40s，CSL需要约28天，pT约12天
+## The API key should be placed in the environment variables
+
+# Each successfully processed training sample takes about 30-40s; CSL requires about 28 days, and pT about 12 days
 
 import os
 import json
@@ -16,34 +18,70 @@ import re
 from datetime import datetime
 from openai import OpenAI
 
-PROJECT_ROOT = "/root/zjf/bkbs-signcot"
 
-output_dir = f"{PROJECT_ROOT}/cotdata/CSL"
+output_dir = f"/cotdata/CSL"
 os.makedirs(output_dir, exist_ok=True)
 
-frame_desc_root = f"{PROJECT_ROOT}/prompts/CSL/frame_descriptions_txt"
-csl_annotation_path = f"{PROJECT_ROOT}/prompts/CSL/csl_train_annotation.txt"
+frame_desc_root = f"/prompts/CSL/frame_descriptions_txt"
+csl_annotation_path = f"/prompts/CSL/csl_train_annotation.txt"
 
-log_dir = f"{PROJECT_ROOT}/log"
+log_dir = f"/log"
 os.makedirs(log_dir, exist_ok=True)
-log_file = f"{log_dir}/mimo-CSLgcot-log.jsonl"
+log_file = f"{log_dir}/CSLgcot-log.jsonl"
 
-# 读取prompt文件
-with open(f"{PROJECT_ROOT}/prompts/CSL-mimo-frame_prompt.txt", "r", encoding="utf-8") as f:
+# Read the prompt file
+with open(f"/prompts/CSL-frame_prompt.txt", "r", encoding="utf-8") as f:
     base_prompt = f.read().strip()
 
-# 读取并解析csl_train_annotation.txt文件
+# Read and parse the csl_train_annotation.txt file
 def parse_csl_annotation(file_path):
-    pass
-        
-    # 确保所有字段都存在
-    if all(key in entry for key in ["name", "gloss_sequence", "video_structure"]):
-        entries.append(entry)
+    entries = []
+
+    with open(file_path, "r", encoding="utf-8") as f:
+        text = f.read()
+
+    blocks = re.split(r'(?m)^={20,}\s*$', text)
+
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+
+        entry = {}
+
+        name_match = re.search(
+            r'(?m)^name:\s*(.*?)\s*$',
+            block
+        )
+        if name_match:
+            entry["name"] = name_match.group(1).strip()
+
+        gloss_match = re.search(
+            r'(?m)^gloss_sequence:\s*(.*?)\s*$',
+            block
+        )
+        if gloss_match:
+            entry["gloss_sequence"] = gloss_match.group(1).strip()
+
+        video_structure_match = re.search(
+            r'(?ms)^video_structure:\s*\n?(.*)$',
+            block
+        )
+        if video_structure_match:
+            entry["video_structure"] = video_structure_match.group(1).strip()
+
+        if all(
+            key in entry
+            for key in ["name", "gloss_sequence", "video_structure"]
+        ):
+            entries.append(entry)
+
     return entries
 
 def load_each_frame_description(entry, frame_desc_root):
     """
-    从 frame_descriptions_txt 目录中加载与 entry["name"] 对应的逐帧描述文本
+    Load the frame-by-frame description text corresponding to entry["name"]
+    from the frame_descriptions_txt directory
     """
     name = entry.get("name")
     if not name:
@@ -58,47 +96,48 @@ def load_each_frame_description(entry, frame_desc_root):
     
 def check_output_json_exists(entry, output_dir):
     """
-    检查 output_dir 中是否已存在与 entry["name"] 对应的 {name}.json 文件
+    Check whether the corresponding {name}.json file for entry["name"]
+    already exists in output_dir
     """
     name = entry.get("name")
     if not name:
-        return True  # 如果连名字都没有，就当它存在（过滤掉）
+        return True  # If even the name is missing, treat it as existing and filter it out
     
     json_path = os.path.join(output_dir, f"{name}.json")
     return os.path.exists(json_path)
 
 def extract_json_from_response(response_text):
     """
-    从响应文本中提取JSON部分
-    处理以下情况：
-    1. 包含```json ... ```标记
-    2. 直接返回JSON对象
+    Extract the JSON part from the response text
+    Handle the following cases:
+    1. Contains ```json ... ``` markers
+    2. Directly returns a JSON object
     """
-    # 尝试匹配 ```json ... ``` 格式
+    # Try to match the ```json ... ``` format
     json_match = re.search(r'```json\s*(.*?)\s*```', response_text, re.DOTALL)
     if json_match:
         json_str = json_match.group(1)
     else:
-        # 如果没有代码块标记，直接使用整个响应
+        # If there is no code block marker, use the entire response directly
         json_str = response_text.strip()
     
-    # 尝试解析JSON
+    # Try to parse JSON
     try:
         return json.loads(json_str)
     except json.JSONDecodeError as e:
-        print(f"JSON解析错误: {e}")
-        # print(f"原始响应: {response_text[:500]}...")
+        print(f"JSON parsing error: {e}")
+        # print(f"Original response: {response_text[:500]}...")
         return None
 
 def count_glosses_in_sequence(gloss_sequence):
     """
-    统计gloss_sequence中的词数量
-    形式: "1]glossA 2]glossB ..."
+    Count the number of glosses in gloss_sequence
+    Format: "1]glossA 2]glossB ..."
     """    
-    # 按空格分割并过滤空字符串
+    # Split by spaces and filter out empty strings
     parts = [part for part in gloss_sequence.split() if part]
     
-    # 统计有效的gloss（以数字]开头的内容）
+    # Count valid glosses (items starting with a number followed by ])
     gloss_count = 0
     for part in parts:
         if re.match(r'^\d+\]', part):
@@ -108,7 +147,7 @@ def count_glosses_in_sequence(gloss_sequence):
 
 def count_segments_in_json(json_data):
     """
-    统计JSON数据中reasoning.segments的数量
+    Count the number of items in reasoning.segments in the JSON data
     """
     try:
         if "reasoning" in json_data and "segments" in json_data["reasoning"]:
@@ -118,14 +157,14 @@ def count_segments_in_json(json_data):
     except (KeyError, TypeError):
         return 0
 
-# 加载解析的条目
+# Load parsed entries
 entries = parse_csl_annotation(csl_annotation_path)
 
 filtered_entries = []
 for entry in entries:
-    # 检查是否已存在输出 JSON 文件
+    # Check whether the output JSON file already exists
     if check_output_json_exists(entry, output_dir):
-        continue  # 跳过已处理过的条目
+        continue  # Skip entries that have already been processed
     
     each_frame_description = load_each_frame_description(entry, frame_desc_root)
     if each_frame_description is not None:
@@ -141,22 +180,23 @@ client = OpenAI(
     base_url="BASE_URL"
 )
 
+
 def write_jsonl_log(log_data, log_file):
-    """写入JSONL格式的日志"""
+    """Write logs in JSONL format"""
     with open(log_file, "a", encoding="utf-8") as f:
         f.write(json.dumps(log_data, ensure_ascii=False) + "\n")
 
 for i, entry in enumerate(entries):
-    # 写入处理开始日志
+    # Write the processing-start log
     process_start_log = {
         "timestamp": datetime.now().isoformat(),
         "level": "INFO", 
-        "message": f"开始处理第 {i+1}/{len(entries)} 个条目: {entry['name']}"
+        "message": f"Processing entry {i+1}/{len(entries)}: {entry['name']}"
     }
     write_jsonl_log(process_start_log, log_file)
-    print(f"处理第 {i+1}/{len(entries)} 个条目: {entry['name']}")
+    print(f"Processing entry {i+1}/{len(entries)}: {entry['name']}")
 
-    # 构建完整的prompt
+    # Build the complete prompt
     full_prompt = f"{base_prompt}\n"
     # full_prompt += "Input: \n\n"
     # full_prompt += f"name: {entry['name']}\n\n"
@@ -164,24 +204,12 @@ for i, entry in enumerate(entries):
     full_prompt += f"video_structure: {entry['video_structure']}\n"
     full_prompt += f"each_frame_description:\n{entry['each_frame_description']}"
     
-    # 重试计数器
+    # Retry counter
     retry_count = 0
-    max_retries = 4  # 总共最多尝试4次（第1次 + 3次重试）
+    max_retries = 4  # Maximum of 4 attempts in total (1 initial attempt + 3 retries)
     success = False
     while retry_count < max_retries and not success:
-        try:
-            # # 如果是重试，记录重试信息
-            # if retry_count > 0:
-            #     retry_log = {
-            #         "timestamp": datetime.now().isoformat(),
-            #         "level": "WARNING",
-            #         "type": "api_retry",
-            #         "entry_name": entry['name'],
-            #         "retry_count": retry_count,
-            #     }
-            #     write_jsonl_log(retry_log, log_file)
-            #     print(f"第{retry_count}次重新API调用: {entry['name']}")
-        
+        try:        
             completion = client.chat.completions.create(
                 model="deepseek-V3",
                 messages=[
@@ -201,7 +229,7 @@ for i, entry in enumerate(entries):
         
             response_content = completion.choices[0].message.content
         
-            # 记录API响应成功日志
+            # Record the successful API response log
             api_success_log = {
                 "timestamp": datetime.now().isoformat(),
                 "level": "INFO",
@@ -211,13 +239,13 @@ for i, entry in enumerate(entries):
             }
             write_jsonl_log(api_success_log, log_file)
         
-            print(f"第{retry_count+1}次尝试响应，api成功")
+            print(f"Attempt {retry_count+1}: API response succeeded")
             # print(response_content)
         
-            # 提取JSON数据
+            # Extract JSON data
             json_data = extract_json_from_response(response_content)
             
-            # 如果无法提取JSON，进行重试
+            # Retry if JSON cannot be extracted
             if json_data is None:
                 if retry_count < max_retries - 1:
                     retry_count += 1
@@ -231,7 +259,7 @@ for i, entry in enumerate(entries):
                     write_jsonl_log(json_retry_log, log_file)
                     continue
                 else:
-                    # 重试次数用完，记录错误
+                    # Retry limit reached; record the error
                     json_error_log = {
                         "timestamp": datetime.now().isoformat(),
                         "level": "ERROR",
@@ -240,11 +268,11 @@ for i, entry in enumerate(entries):
                         "retry_count": retry_count,
                     }
                     write_jsonl_log(json_error_log, log_file)
-                    error_msg = f"无法解析条目 {entry['name']} 的响应为JSON"
+                    error_msg = f"Failed to parse the response for entry {entry['name']} as JSON"
                     print(error_msg)
                     break
             
-            # 检查gloss数量与segment数量的一致性
+            # Check consistency between the number of glosses and segments
             gloss_count = count_glosses_in_sequence(entry['gloss_sequence'])
             segment_count = count_segments_in_json(json_data)
             
@@ -261,10 +289,10 @@ for i, entry in enumerate(entries):
                         "retry_count": retry_count,
                     }
                     write_jsonl_log(consistency_retry_log, log_file)
-                    print(f"gloss数量({gloss_count})与segment数量({segment_count})不一致，进行重试")
+                    print(f"Gloss count ({gloss_count}) does not match segment count ({segment_count}); retrying")
                     continue
                 else:
-                    # 重试次数用完，记录错误
+                    # Retry limit reached; record the error
                     consistency_error_log = {
                         "timestamp": datetime.now().isoformat(),
                         "level": "ERROR",
@@ -276,17 +304,17 @@ for i, entry in enumerate(entries):
                         "retry_count": retry_count,
                     }
                     write_jsonl_log(consistency_error_log, log_file)
-                    error_msg = f"条目 {entry['name']} 的gloss数量({gloss_count})与segment数量({segment_count})不一致"
+                    error_msg = f"Entry {entry['name']} has mismatched gloss count ({gloss_count}) and segment count ({segment_count})"
                     print(error_msg)
                     break
         
-            # 一致性检查通过，保存JSON文件
+            # Consistency check passed; save the JSON file
             name = entry['name']
             output_file = f"{output_dir}/{name}.json"
             with open(output_file, "w", encoding="utf-8") as f:
                 json.dump(json_data, f, ensure_ascii=False, indent=4)
             
-            # 记录成功日志
+            # Record the successful-save log
             save_success_log = {
                 "timestamp": datetime.now().isoformat(),
                 "level": "INFO",
@@ -294,7 +322,7 @@ for i, entry in enumerate(entries):
                 "entry_name": entry['name'],
             }
             write_jsonl_log(save_success_log, log_file)
-            print(f"成功保存: {output_file}")
+            print(f"Successfully saved: {output_file}")
             print("\n" + "="*30 + "\n")
             success = True
 
@@ -308,12 +336,12 @@ for i, entry in enumerate(entries):
                 "error_message": str(e),
             }
             write_jsonl_log(error_log, log_file)
-            error_msg = f"处理条目 {entry['name']} 时出错: {str(e)}"
+            error_msg = f"Error processing entry {entry['name']}: {str(e)}"
             print(error_msg)
             print("\n" + "="*30 + "\n")
             break
 
-# 记录处理完成日志
+# Record the processing-complete log
 end_log = {
     "timestamp": datetime.now().isoformat(),
     "level": "INFO",
@@ -322,6 +350,6 @@ end_log = {
 }
 write_jsonl_log(end_log, log_file)
 
-# 记录处理完成
-completion_message = f"处理完成于 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+# Record processing completion
+completion_message = f"Processing completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
 print(completion_message)

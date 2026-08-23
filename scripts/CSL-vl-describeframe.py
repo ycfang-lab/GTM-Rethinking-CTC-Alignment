@@ -1,10 +1,7 @@
-## 最终版
-## 按根据qwen3-vl-8b-instruct模型，生成对于单独每一幅画面帧的描述。
-## 对每一帧的描述效果不赖
-## 用于mimo-frame_prompt.txt和mimo-frame_gencot.py的生成
+## Generate descriptions for each individual video frame using the Qwen3-VL-8B-Instruct model.
 
-# 若总帧数过大，采取分阶段减小文本长度的采样，保证最终描述文本在40帧左右
-# 单卡4090，若每一帧都描述，需约50天，若采用代码中所写的采样策略，约30天
+# If the total number of frames is too large, use staged sampling to reduce text length, ensuring the final description text contains about 40 frames
+# On a single RTX 4090, describing every frame would take about 50 days; using the sampling strategy in this code takes about 30 days
 
 import os
 import csv
@@ -16,31 +13,28 @@ import json
 from datetime import datetime
 
 # =========================
-# 配置
+# Configuration
 # =========================
-PROJECT_ROOT = "/root/zjf/bkbs-signcot"
+MODEL_PATH = f"/models/Qwen/Qwen3-VL-8B-Instruct"
+FRAMES_ROOT = f"/CSL-Daily/frames_512x512"
 
-DATA_ROOT = f"/root/autodl-tmp/z-csl-data"
-MODEL_PATH = f"{DATA_ROOT}/models/Qwen/Qwen3-VL-8B-Instruct"
-FRAMES_ROOT = f"{DATA_ROOT}/CSL-Daily/frames_512x512"
+name_CSV = f"/CSL-Daily/sentence_label/train_name.csv" # Manually extracted train-only video names from split_1.csv
 
-name_CSV = f"{DATA_ROOT}/CSL-Daily/sentence_label/train_name.csv" #由split_1.csv中自己摘出来的只有train的视频名
-
-# 创建输出目录
-OUTPUT_DIR = f"{PROJECT_ROOT}/prompts/CSL/frame_descriptions_txt"
+# Create output directory
+OUTPUT_DIR = f"/prompts/CSL/frame_descriptions_txt"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# 创建log目录
-LOG_DIR = f"{PROJECT_ROOT}/log"
+# Create log directory
+LOG_DIR = f"/log"
 os.makedirs(LOG_DIR, exist_ok=True)
-# 日志文件路径
+# Log file path
 log_file = Path(LOG_DIR) / "describe-CSLframe-log.jsonl"
 
 MAX_NEW_TOKENS = 2048
 DEVICE = "cuda"
 
 # =========================
-# 加载模型
+# Load model
 # =========================
 print("Loading model...")
 processor = AutoProcessor.from_pretrained(MODEL_PATH)
@@ -51,7 +45,7 @@ model = Qwen3VLForConditionalGeneration.from_pretrained(
 )
 print("Model loaded.")
 
-# 支持的图像扩展名
+# Supported image extensions
 IMG_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
 
 def is_image_file(filepath):
@@ -71,7 +65,7 @@ PROMPT = (
 )
 
 def generate_description(image_path):
-    """对单张图像生成描述"""
+    """Generate a description for a single image"""
     messages = [
         {
             "role": "user",
@@ -109,14 +103,14 @@ def generate_description(image_path):
     return generated_text.strip()
 
 # =========================
-# 主流程：遍历视频目录，逐帧生成描述并写入 .txt
+# Main process: traverse video directories, generate descriptions frame by frame, and write them to .txt files
 # =========================
 def main():    
     frame_root = Path(FRAMES_ROOT)
     if not frame_root.exists():
         raise FileNotFoundError(f"FRAMES_ROOT not found: {FRAMES_ROOT}")
     
-    # 从CSV文件中读取训练集名称
+    # Read training set names from the CSV file
     print(f"Reading training names from {name_CSV}...")
     train_names = set()
     try:
@@ -129,15 +123,15 @@ def main():
     except Exception as e:
         print(f"Error reading CSV file: {e}")
         print("Will process all videos as fallback.")
-        train_names = None  # 如果读取失败，处理所有视频
+        train_names = None  # If reading fails, process all videos
     
     print(f"Found {len(train_names) if train_names else 'all'} video names in CSV.")
     
-    # 获取所有视频目录并筛选
+    # Get all video directories and filter them
     video_dirs = []
     for d in sorted(frame_root.iterdir()):
         if d.is_dir():
-            # 如果没有train_names（读取失败）或者文件夹名在train_names中
+            # If train_names is unavailable (reading failed), or the folder name is in train_names
             if train_names is None or d.name in train_names:
                 video_dirs.append(d)
             # else:
@@ -161,7 +155,7 @@ def main():
             print(f"No images in {video_dir}, skipping.")
             continue
         
-        # 按文件名排序（确保帧序正确）
+        # Sort by filename to ensure correct frame order
         frame_files.sort(key=lambda x: x.name)
 
         output_lines = []
@@ -169,20 +163,20 @@ def main():
         successful_frames = 0
         error_frames = 0
         
-        for idx, frame_path in enumerate(frame_files, start=1): # 冗余处理，若有时间可以逐帧描述，注释掉整个这部分
-            if frame_count < 160 and idx % 3 != 1: # 每3帧跳过2帧，(53, n)
+        for idx, frame_path in enumerate(frame_files, start=1): # Redundant processing; if time permits, describe every frame by commenting out this entire section
+            if frame_count < 160 and idx % 3 != 1: # Skip 2 out of every 3 frames, (53, n)
                 print(f"  [{idx}/{len(frame_files)}] Skipping {frame_path.name} (idx % 3 != 1)")
-                continue  # 直接跳过，不处理这个帧
-            if frame_count >= 160 and idx % 4 != 1: # 每4帧跳过3帧，(x, 40)
+                continue  # Skip this frame directly without processing
+            if frame_count >= 160 and idx % 4 != 1: # Skip 3 out of every 4 frames, (x, 40)
                 print(f"  [{idx}/{len(frame_files)}] Skipping {frame_path.name} (idx % 4 != 1)")
-                continue  # 直接跳过，不处理这个帧
+                continue  # Skip this frame directly without processing
             try:
                 print(f"  [{idx}/{len(frame_files)}] Processing {frame_path.name} ...")
                 desc = generate_description(str(frame_path))
-                # 确保所有描述（包括置信度）都在一行内
-                # 替换换行符为空格，确保一帧只占一行
+                # Ensure all descriptions (including confidence) remain on a single line
+                # Replace newline characters with spaces so each frame occupies only one line
                 desc_one_line = desc.replace('\n', ' ').strip()
-                # 去除多余空格
+                # Remove redundant spaces
                 while '  ' in desc_one_line:
                     desc_one_line = desc_one_line.replace('  ', ' ')
                 output_lines.append(f"{idx}. {desc_one_line}")
@@ -193,16 +187,16 @@ def main():
                 print(f"Error on {frame_path}: {e}")
                 error_frames += 1
         
-        # 写入 .txt 文件
+        # Write to .txt file
         output_file = Path(OUTPUT_DIR) / f"{video_dir.name}.txt"
         with open(output_file, 'w', encoding='utf-8') as f:
-            # 在第一行添加总帧数信息
+            # Add total frame count information on the first line
             f.write(f"(total {frame_count} frames in this video): \n")
-            # 每行是一个完整的帧描述
+            # Each line contains a complete frame description
             for line in output_lines:
                 f.write(f"{line}\n")
 
-        # 创建处理结果日志条目
+        # Create processing result log entry
         log_entry = {
             "timestamp": datetime.now().isoformat(),
             "video_name": video_dir.name,
@@ -213,7 +207,7 @@ def main():
             "successful_frames": successful_frames
         }
         
-        # 写入日志文件
+        # Write to log file
         with open(log_file, 'a', encoding='utf-8') as f:
             f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
         

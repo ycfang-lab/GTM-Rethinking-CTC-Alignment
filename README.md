@@ -4,10 +4,11 @@ prompts
   ├─ Online_LLM_prompt.txt
 scripts
   ├─ cslr-baseline.py（baseline）
-  ├─ csle-ce+ctc.py（ours）
+  ├─ cslr-ce+ctc.py（ours）
   ├─ ctconlyspan.py（ctc anchor point）
   ├─ vl-describeframe.py（MLLM）
   ├─ frame-change.py（Window-based Difference Score）
+  ├─ get-train-ann.py（Merge the above three types of info to form a txt file.）
   ├─ llm-reason.py（Online LLM）
   ├─ model-download.py
 finalspan.txt
