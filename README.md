@@ -1,8 +1,8 @@
 # GTM: Rethinking CTC Alignment in CSLR
 
-This is the official repository for the EMNLP 2026 main conference paper, “Beyond CTC Spikes: LLM-Driven Gloss-Temporal Supervision for Continuous Sign Language Recognition.”
+This is the official repository for the EMNLP 2026 main conference paper, “Beyond CTC Spikes: LLM-Driven Gloss-Temporal Supervision for Continuous Sign Language Recognition”.
 
-In this work, we find that dense supervision is more effective than sparse supervision. We introduce a novel GTM module to construct dense supervision, where the LLM serves as a reasoning operator rather than a sign language result generator. We further design a tailored curriculum learning strategy to guide the model from frame-level learning to sequence-level learning.
+In this work, we find that dense supervision is more effective than sparse supervision. We introduce a novel GTM module to construct dense supervision, where the LLM serves as a reasoning operator rather than a sign language result generator. We further design a tailored curriculum learning strategy to guide the model from frame-level learning to sequence-level learning. Finally, without introducing additional trainable parameters, the resulting dense supervision achieves competitive performance against several state-of-the-art RGB-only methods and consistently improves the baseline across different visual backbones.
 
 We provide all runnable code, prompt files, and the final annotation data. The annotation data must be used in accordance with the licenses of the original datasets (see [Data Preparation](#data-preparation)).
 
@@ -58,6 +58,7 @@ Download datasets and extract them, no further data preprocessing needed.
 ## Steps
 
 model-download -> GTM (ctc anchor point + MLLM + WDS -> get-train-ann -> Online LLM) -> finalspan.txt 
+
 -> csle-ce+ctc.py
 
 ------
