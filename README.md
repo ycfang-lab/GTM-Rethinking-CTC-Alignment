@@ -59,7 +59,7 @@ Download datasets and extract them, no further data preprocessing needed.
 
 model-download -> GTM (ctc anchor point + MLLM + WDS -> get-train-ann -> Online LLM) -> finalspan.txt 
 
--> csle-ce+ctc.py
+-> cslr-ce+ctc.py
 
 ------
 
