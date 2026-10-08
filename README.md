@@ -53,6 +53,10 @@ pip install -r requirements-cslr.txt
 
 Download datasets and extract them, no further data preprocessing needed.
 
+### Data Usage Notice
+
+We strictly comply with the data usage agreements established by the original dataset providers. Accordingly, csl_train_finalspan.txt is not publicly distributed. If you wish to use this file, please first obtain the necessary authorization from the original dataset team and then contact us.
+
 ------
 
 ## Steps
